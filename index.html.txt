@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kırmızı Topu Bul Oyunu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        .game-board {
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-end; 
+            height: 200px;
+            margin-top: 50px;
+            position: relative;
+        }
+
+        .shell-container {
+            width: 100px;
+            height: 150px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            position: absolute; 
+            /* Karıştırma sırasında 'left' animasyonu */
+            transition: left 0.5s ease-in-out; 
+            cursor: pointer;
+        }
+        
+        /* Top (Ball) Stili */
+        .ball {
+            width: 50px;
+            height: 50px;
+            background-color: #ff4136; /* Kırmızı */
+            border-radius: 50%;
+            position: absolute;
+            bottom: 0; 
+            z-index: 5; /* Kutudan (10) daha aşağıda */
+            transition: opacity 0.3s;
+        }
+        
+        /* Kutu (Shell) Stili */
+        .shell {
+            width: 100px;
+            height: 100px;
+            background-color: #a0a0a0;
+            border-radius: 8px;
+            position: relative;
+            z-index: 10; /* Topu kapatır */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 5rem; 
+            line-height: 1;
+            color: #4a5568; 
+            box-shadow: 0 0px 15px rgba(0, 0, 0, 0.3);
+            /* Sadece kutunun kalkması için transform eklenir */
+            transition: transform 0.3s ease-out, background-color 0.3s; 
+        }
+
+        .shell:hover:not(.shuffling) {
+            background-color: #909090;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container mt-8">
+        <h1 class="text-3xl font-bold text-center text-gray-700 mb-6">Kırmızı Topu Bul 🔴</h1>
+
+        <!-- Puan Paneli -->
+        <div class="flex justify-around p-4 border-b border-gray-200 mb-6 bg-gray-50 rounded-lg">
+            <div class="text-center">
+                <p class="text-xl font-semibold text-green-600">Doğru Tahmin</p>
+                <span id="correct-count" class="text-3xl font-extrabold">0</span>
+            </div>
+            <div class="text-center">
+                <p class="text-xl font-semibold text-red-600">Yanlış Tahmin</p>
+                <span id="wrong-count" class="text-3xl font-extrabold">0</span>
+            </div>
+        </div>
+
+        <!-- Oyun Tahtası -->
+        <div id="game-board" class="game-board">
+            <!-- Kutular ve Toplar buraya JS ile eklenecek -->
+        </div>
+
+        <!-- Mesaj Kutusu -->
+        <div id="message-box" class="text-gray-800">
+            Başlamak için 'Karıştır' butonuna tıklayın.
+        </div>
+        
+        <!-- Kontrol Butonu -->
+        <div class="flex justify-center mt-8">
+            <button id="shuffle-button" class="px-6 py-3 bg-indigo-600 text-white text-lg font-semibold rounded-full shadow-lg hover:bg-indigo-700 transition duration-300">
+                Karıştır
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elementleri
+        const gameBoard = document.getElementById('game-board');
+        const shuffleButton = document.getElementById('shuffle-button');
+        const messageBox = document.getElementById('message-box');
+        const correctCountEl = document.getElementById('correct-count');
+        const wrongCountEl = document.getElementById('wrong-count');
+
+        // Oyun Durumu Değişkenleri
+        let correctGuesses = 0;
+        let wrongGuesses = 0;
+        let ballLocation = 0; // 0, 1 veya 2
+        let gameActive = false;
+        let isShuffling = false;
+
+        const SHELL_COUNT = 3;
+        // Kutuların başlangıç X koordinatları (Oyun tahtasına göre ayarlanmıştır)
+        const SHELL_POSITIONS = [50, 250, 450]; 
+
+        // --- Yardımcı Fonksiyonlar ---
+
+        function updateScoreDisplay() {
+            correctCountEl.textContent = correctGuesses;
+            wrongCountEl.textContent = wrongGuesses;
+        }
+
+        function createShellElement(index, hasBall) {
+            const shellContainer = document.createElement('div');
+            shellContainer.className = 'shell-container';
+            shellContainer.id = `shell-${index}`;
+            // Başlangıç konumunu ayarla
+            shellContainer.style.left = `${SHELL_POSITIONS[index]}px`;
+            shellContainer.dataset.index = index;
+            shellContainer.dataset.hasBall = hasBall;
+
+            // Kırmızı Top (zeminde kalır)
+            const ball = document.createElement('div');
+            ball.className = 'ball';
+            ball.style.opacity = '0'; // Başlangıçta gizli
+            shellContainer.appendChild(ball);
+
+            // Kutu (Shell)
+            const shell = document.createElement('div');
+            shell.className = 'shell';
+            shell.textContent = '📦';
+            shellContainer.appendChild(shell);
+
+            shellContainer.addEventListener('click', () => handleGuess(shellContainer));
+            return shellContainer;
+        }
+
+        function renderBoard() {
+            gameBoard.innerHTML = '';
+            // Yeni tur için topu rastgele bir kutuya gizle
+            ballLocation = Math.floor(Math.random() * SHELL_COUNT); 
+            
+            for (let i = 0; i < SHELL_COUNT; i++) {
+                const hasBall = (i === ballLocation);
+                const shellEl = createShellElement(i, hasBall);
+                gameBoard.appendChild(shellEl);
+            }
+            
+            // Tahtayı ortalamak için genişliği ayarla
+            gameBoard.style.width = `${SHELL_POSITIONS[SHELL_COUNT - 1] + 150}px`; 
+        }
+
+        // Kutuları karıştırır
+        async function shuffleShells(iterations = 20, delay = 150) {
+            const shells = Array.from(document.querySelectorAll('.shell-container'));
+            isShuffling = true;
+            shuffleButton.disabled = true;
+            messageBox.textContent = "Kutular Karıştırılıyor... Odaklanın!";
+
+            // Kutuların tıklanmasını engellemek için geçici sınıf
+            shells.forEach(shell => shell.classList.add('shuffling'));
+
+            for (let i = 0; i < iterations; i++) {
+                // Rastgele iki kutu seç ve takas et
+                let index1 = Math.floor(Math.random() * SHELL_COUNT);
+                let index2 = Math.floor(Math.random() * SHELL_COUNT);
+                while (index1 === index2) {
+                    index2 = Math.floor(Math.random() * SHELL_COUNT);
+                }
+
+                const shell1 = shells[index1];
+                const shell2 = shells[index2];
+
+                // Mevcut 'left' pozisyonlarını al
+                const pos1 = parseFloat(shell1.style.left);
+                const pos2 = parseFloat(shell2.style.left);
+
+                // Pozisyonları takas et (CSS transition ile hareket başlar)
+                shell1.style.left = `${pos2}px`;
+                shell2.style.left = `${pos1}px`;
+
+                // 'shells' dizisindeki referansları takas et
+                shells[index1] = shell2;
+                shells[index2] = shell1;
+
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+
+            // Karıştırma bitti
+            shells.forEach(shell => shell.classList.remove('shuffling'));
+            isShuffling = false;
+            gameActive = true;
+            shuffleButton.disabled = true;
+            messageBox.textContent = "Tahmin Et! Top hangi kutunun altında?";
+        }
+
+        // Tüm kutuları açar ve sonucu gösterir
+        function flipAllShells(isCorrect) {
+            gameActive = false; // Oyun tahmin yapılana kadar durur
+            shuffleButton.disabled = false;
+            
+            const shells = document.querySelectorAll('.shell-container');
+            
+            // Tüm kutuları aç ve topu göster
+            shells.forEach(shellContainer => {
+                const ballEl = shellContainer.querySelector('.ball');
+                const shellEl = shellContainer.querySelector('.shell');
+
+                // Kutuyu yukarı kaydır (Sadece kutu elementi hareket eder)
+                shellEl.style.transform = 'translateY(-50px)'; 
+                shellEl.style.backgroundColor = '#c0c0c0';
+
+                // Topu görünür yap (Sadece top olan kutuda görünür olacak)
+                if (shellContainer.dataset.hasBall === 'true') {
+                    ballEl.style.opacity = '1';
+                }
+
+                // Kutudan tıklama olayını kaldır
+                shellContainer.style.cursor = 'default';
+                shellContainer.removeEventListener('click', () => handleGuess(shellContainer));
+            });
+            
+            // Sonuç mesajını göster
+            if (isCorrect) {
+                messageBox.textContent = "DOĞRU BİLDİN! 🎉 Yeni tur için 'Karıştır'.";
+                messageBox.classList.remove('text-red-600');
+                messageBox.classList.add('text-green-600');
+            } else {
+                messageBox.textContent = "YANLIŞ TAHMİN! 😔 Yeni tur için 'Karıştır'.";
+                messageBox.classList.remove('text-green-600');
+                messageBox.classList.add('text-red-600');
+            }
+        }
+
+        // --- Ana Oyun Mantığı ---
+
+        function handleGuess(shellContainer) {
+            if (!gameActive || isShuffling) return;
+
+            const hasBall = shellContainer.dataset.hasBall === 'true';
+
+            if (hasBall) {
+                correctGuesses++;
+                flipAllShells(true);
+            } else {
+                wrongGuesses++;
+                flipAllShells(false);
+            }
+
+            updateScoreDisplay();
+        }
+
+        // Karıştır butonuna tıklandığında oyunu başlat
+        shuffleButton.addEventListener('click', () => {
+            renderBoard(); // Yeni bir top konumu ile tahtayı sıfırla
+            shuffleShells();
+            messageBox.classList.remove('text-green-600', 'text-red-600');
+        });
+
+        // İlk oyun başlangıcı
+        window.onload = () => {
+            renderBoard();
+            updateScoreDisplay();
+            shuffleButton.disabled = false;
+        };
+
+    </script>
+</body>
+</html>
